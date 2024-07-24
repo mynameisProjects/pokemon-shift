@@ -740,6 +740,7 @@ const u8 gText_AboutG_Mode[] = _("ABOUT G-MODE");
 const u8 gText_E_Mode[] = _("E-MODE");
 const u8 gText_G_Mode[] = _("G-MODE");
 const u8 gText_MenuOptionPokedex[] = _("POKéDEX");
+const u8 gText_MenuPSS[] = _("PSS");
 const u8 gText_MenuOptionPokemon[] = _("POKéMON");
 const u8 gText_MenuOptionBag[] = _("BAG");
 const u8 gText_MenuOptionPokenav[] = _("POKéNAV");
