@@ -51,6 +51,8 @@
           types of functions are likely located.
 */
 
+extern u8 EventScript_AccessPokemonStorage[];
+
 // PC main menu options
 enum {
     OPTION_WITHDRAW,
@@ -3751,6 +3753,8 @@ static void Task_OnBPressed(u8 taskId)
             gPlayerPartyCount = CalculatePlayerPartyCount();
             sStorage->screenChangeType = SCREEN_CHANGE_EXIT_BOX;
             SetPokeStorageTask(Task_ChangeScreen);
+            //ScriptContext_SetupScript(EventScript_AccessPokemonStorage);
+            //LockPlayerFieldControls();
         }
         break;
     }

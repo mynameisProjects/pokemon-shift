@@ -48,7 +48,7 @@
 #include "constants/rgb.h"
 #include "constants/songs.h"
 
-extern u8 EventScript_PCMainMenu[];
+//extern u8 EventScript_PC[];
 
 // Menu actions
 enum
@@ -705,7 +705,7 @@ static bool8 StartMenuPCCallback(void)
 {
 	RemoveExtraStartMenuWindows();
     HideStartMenu();
-    ScriptContext_SetupScript(EventScript_PCMainMenu);
+    ScriptContext_SetupScript(EventScript_PC);
 
     return TRUE;
 }
