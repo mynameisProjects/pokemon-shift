@@ -4,12 +4,12 @@ EventScript_PC::
 	special DoPCTurnOnEffect
 	playse SE_PC_ON
 	setflag FLAG_POKEMONPCMENU
-	msgbox Text_BootUpPC, MSGBOX_DEFAULT
+	@msgbox Text_BootUpPC, MSGBOX_DEFAULT
 	goto EventScript_PCMainMenu
 	end
 
 EventScript_PCMainMenu::
-	message gText_WhichPCShouldBeAccessed
+	@message gText_WhichPCShouldBeAccessed
 	waitmessage
 	special ScriptMenu_CreatePCMultichoice
 	waitstate
@@ -27,7 +27,7 @@ EventScript_AccessPC::
 
 EventScript_AccessPlayersPC::
 	playse SE_PC_LOGIN
-	msgbox gText_AccessedPlayersPC, MSGBOX_DEFAULT
+	@msgbox gText_AccessedPlayersPC, MSGBOX_DEFAULT
 	special PlayerPC
 	waitstate
 	goto EventScript_PCMainMenu
@@ -44,11 +44,11 @@ EventScript_AccessPokemonStorage::
 	end
 
 EventScript_AccessSomeonesPC::
-	msgbox gText_AccessedSomeonesPC, MSGBOX_DEFAULT
+	@msgbox gText_AccessedSomeonesPC, MSGBOX_DEFAULT
 	return
 
 EventScript_AccessLanettesPC::
-	msgbox gText_AccessedLanettesPC, MSGBOX_DEFAULT
+	@msgbox gText_AccessedLanettesPC, MSGBOX_DEFAULT
 	return
 
 EventScript_TurnOffPC::
