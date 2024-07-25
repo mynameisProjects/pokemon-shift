@@ -48,6 +48,8 @@
 #include "constants/rgb.h"
 #include "constants/songs.h"
 
+extern u8 EventScript_PCMainMenu[];
+
 // Menu actions
 enum
 {
@@ -646,6 +648,7 @@ static bool8 HandleStartMenuInput(void)
         gMenuCallback = sStartMenuItems[sCurrentStartMenuActions[sStartMenuCursorPos]].func.u8_void;
 
         if (gMenuCallback != StartMenuSaveCallback
+            && gMenuCallback != StartMenuPCCallback
             && gMenuCallback != StartMenuExitCallback
             && gMenuCallback != StartMenuDebugCallback
             && gMenuCallback != StartMenuSafariZoneRetireCallback
@@ -700,16 +703,11 @@ static bool8 StartMenuPokemonCallback(void)
 
 static bool8 StartMenuPCCallback(void)
 {
-	u8 taskId;
-    if (!gPaletteFade.active)
-    {
-        PlayRainStoppingSoundEffect();
-        RemoveExtraStartMenuWindows();
-		EnterPokeStorage(2); // Display PC
-        return TRUE;
-    }
+	RemoveExtraStartMenuWindows();
+    HideStartMenu();
+    ScriptContext_SetupScript(EventScript_PCMainMenu);
 
-    return FALSE;
+    return TRUE;
 }
 
 static bool8 StartMenuBagCallback(void)
