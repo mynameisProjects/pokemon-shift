@@ -51,13 +51,15 @@
           types of functions are likely located.
 */
 
+extern u8 EventScript_AccessPokemonStorage[];
+
 // PC main menu options
 enum {
     OPTION_WITHDRAW,
     OPTION_DEPOSIT,
     OPTION_MOVE_MONS,
     OPTION_MOVE_ITEMS,
-    OPTION_EXIT,
+    //OPTION_EXIT,
     OPTIONS_COUNT
 };
 
@@ -891,8 +893,8 @@ struct {
     [OPTION_WITHDRAW]   = {gText_WithdrawPokemon, gText_WithdrawMonDescription},
     [OPTION_DEPOSIT]    = {gText_DepositPokemon,  gText_DepositMonDescription},
     [OPTION_MOVE_MONS]  = {gText_MovePokemon,     gText_MoveMonDescription},
-    [OPTION_MOVE_ITEMS] = {gText_MoveItems,       gText_MoveItemsDescription},
-    [OPTION_EXIT]       = {gText_SeeYa,           gText_SeeYaDescription}
+    [OPTION_MOVE_ITEMS] = {gText_MoveItems,       gText_MoveItemsDescription}//,
+    //[OPTION_EXIT]       = {gText_SeeYa,           gText_SeeYaDescription}
 };
 
 static const struct WindowTemplate sWindowTemplate_MainMenu =
@@ -901,7 +903,7 @@ static const struct WindowTemplate sWindowTemplate_MainMenu =
     .tilemapLeft = 1,
     .tilemapTop = 1,
     .width = 17,
-    .height = 10,
+    .height = 8,
     .paletteNum = 15,
     .baseBlock = 0x1,
 };
@@ -1581,7 +1583,7 @@ static void Task_PCMainMenu(u8 taskId)
             }
             break;
         case MENU_B_PRESSED:
-        case OPTION_EXIT:
+        //case OPTION_EXIT:
             ClearStdWindowAndFrame(task->tWindowId, TRUE);
             UnlockPlayerFieldControls();
             ScriptContext_Enable();
@@ -1666,14 +1668,21 @@ static void FieldTask_ReturnToPcMenu(void)
 {
     u8 taskId;
     MainCallback vblankCb = gMain.vblankCallback;
-
-    SetVBlankCallback(NULL);
-    taskId = CreateTask(Task_PCMainMenu, 80);
-    gTasks[taskId].tState = 0;
-    gTasks[taskId].tSelectedOption = sPreviousBoxOption;
-    Task_PCMainMenu(taskId);
-    SetVBlankCallback(vblankCb);
-    FadeInFromBlack();
+    if (FlagGet(FLAG_POKEMONPCMENU)==TRUE)
+	{
+        SetVBlankCallback(NULL);
+        taskId = CreateTask(Task_PCMainMenu, 80);
+        gTasks[taskId].tState = 0;
+        gTasks[taskId].tSelectedOption = sPreviousBoxOption;
+        Task_PCMainMenu(taskId);
+        SetVBlankCallback(vblankCb);
+        FadeInFromBlack();
+    }
+    else {
+        SetVBlankCallback(CB2_ReturnToField);
+		FadeInFromBlack();
+		DisableInterrupts(FLAG_POKEMONPCMENU);
+    }
 }
 
 #undef tState
@@ -3744,6 +3753,8 @@ static void Task_OnBPressed(u8 taskId)
             gPlayerPartyCount = CalculatePlayerPartyCount();
             sStorage->screenChangeType = SCREEN_CHANGE_EXIT_BOX;
             SetPokeStorageTask(Task_ChangeScreen);
+            //ScriptContext_SetupScript(EventScript_AccessPokemonStorage);
+            //LockPlayerFieldControls();
         }
         break;
     }

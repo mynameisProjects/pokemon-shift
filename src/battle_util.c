@@ -513,7 +513,7 @@ bool32 TryRunFromBattle(u32 battler)
 
         gBattleStruct->runTries++;
     }
-
+    effect++;
     if (effect != 0)
     {
         gCurrentTurnActionNumber = gBattlersCount;
