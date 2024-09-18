@@ -1600,7 +1600,7 @@ u8 SpawnSpecialObjectEventParameterized(u8 graphicsId, u8 movementBehavior, u8 l
 
 u8 TrySpawnObjectEvent(u8 localId, u8 mapNum, u8 mapGroup)
 {
-    const struct ObjectEventTemplate *objectEventTemplate;
+    /*const*/ struct ObjectEventTemplate *objectEventTemplate;
     s16 cameraX, cameraY;
 
     objectEventTemplate = GetObjectEventTemplateByLocalIdAndMap(localId, mapNum, mapGroup);
@@ -2515,7 +2515,7 @@ struct ObjectEventTemplate *GetObjectEventTemplateByLocalIdAndMap(u8 localId, u8
         templates = mapHeader->events->objectEvents;
         count = mapHeader->events->objectEventCount;
     }
-    return FindObjectEventTemplateByLocalId(localId, templates, count);
+    return (struct ObjectEventTemplate *)FindObjectEventTemplateByLocalId(localId, templates, count);
 }
 
 static const struct ObjectEventTemplate *FindObjectEventTemplateByLocalId(u8 localId, const struct ObjectEventTemplate *templates, u8 count)
