@@ -11,6 +11,7 @@
 #include "field_weather.h"
 #include "fieldmap.h"
 #include "fldeff.h"
+#include "follow_me.h"
 #include "gpu_regs.h"
 #include "main.h"
 #include "mirage_tower.h"
@@ -20,6 +21,7 @@
 #include "palette.h"
 #include "party_menu.h"
 #include "pokemon.h"
+#include "pokemon_storage_system.h"
 #include "script.h"
 #include "sound.h"
 #include "sprite.h"
@@ -28,6 +30,7 @@
 #include "trig.h"
 #include "util.h"
 #include "constants/field_effects.h"
+#include "constants/event_objects.h"
 #include "constants/event_object_movement.h"
 #include "constants/metatile_behaviors.h"
 #include "constants/rgb.h"
@@ -68,7 +71,6 @@ static void PokeballGlowEffect_WaitForSound(struct Sprite *);
 static void PokeballGlowEffect_Idle(struct Sprite *);
 static void SpriteCB_PokeballGlow(struct Sprite *);
 
-static void FieldCallback_UseFly(void);
 static void Task_UseFly(u8);
 static void FieldCallback_FlyIntoMap(void);
 static void Task_FlyIntoMap(u8);
@@ -140,6 +142,7 @@ static bool8 LavaridgeGym1FWarpEffect_Warp(struct Task *, struct ObjectEvent *, 
 
 static void Task_EscapeRopeWarpOut(u8);
 static void EscapeRopeWarpOutEffect_Init(struct Task *);
+static void EscapeRopeWarpOutEffect_HideFollower(struct Task *);
 static void EscapeRopeWarpOutEffect_Spin(struct Task *);
 
 static void FieldCallback_EscapeRopeWarpIn(void);
@@ -691,6 +694,7 @@ static bool8 (*const sLavaridgeGym1FWarpEffectFuncs[])(struct Task *, struct Obj
 static void (*const sEscapeRopeWarpOutEffectFuncs[])(struct Task *) =
 {
     EscapeRopeWarpOutEffect_Init,
+    EscapeRopeWarpOutEffect_HideFollower,
     EscapeRopeWarpOutEffect_Spin,
 };
 
@@ -939,12 +943,14 @@ u8 CreateMonSprite_FieldMove(u16 species, bool8 isShiny, u32 personality, s16 x,
 
 void FreeResourcesAndDestroySprite(struct Sprite *sprite, u8 spriteId)
 {
+    u8 paletteNum = sprite->oam.paletteNum;
     ResetPreservedPalettesInWeather();
     if (sprite->oam.affineMode != ST_OAM_AFFINE_OFF)
     {
         FreeOamMatrix(sprite->oam.matrixNum);
     }
-    FreeAndDestroyMonPicSprite(spriteId);
+    FreeAndDestroyMonPicSpriteNoPalette(spriteId);
+    FieldEffectFreePaletteIfUnused(paletteNum); // Clear palette only if unused, in case follower is using it
 }
 
 // r, g, b are between 0 and 16
@@ -1013,10 +1019,10 @@ void MultiplyPaletteRGBComponents(u16 i, u8 r, u8 g, u8 b)
 
 bool8 FldEff_PokecenterHeal(void)
 {
-    u8 nPokemon;
+    u32 nPokemon;
     struct Task *task;
 
-    nPokemon = CalculatePlayerPartyCount();
+    nPokemon = (OW_IGNORE_EGGS_ON_HEAL <= GEN_3) ? CalculatePlayerPartyCount() : CountPartyNonEggMons();
     task = &gTasks[CreateTask(Task_PokecenterHeal, 0xff)];
     task->tNumMons = nPokemon;
     task->tFirstBallX = 93;
@@ -1345,7 +1351,7 @@ void ReturnToFieldFromFlyMapSelect(void)
     gFieldCallback = FieldCallback_UseFly;
 }
 
-static void FieldCallback_UseFly(void)
+void FieldCallback_UseFly(void)
 {
     FadeInFromBlack();
     CreateTask(Task_UseFly, 0);
@@ -1356,27 +1362,70 @@ static void FieldCallback_UseFly(void)
 
 static void Task_UseFly(u8 taskId)
 {
+    struct ObjectEvent *follower = &gObjectEvents[GetFollowerMapObjId()];
     struct Task *task;
     task = &gTasks[taskId];
-    if (!task->data[0])
+    if (task->data[3] == 0)
     {
-        if (!IsWeatherNotFadingIn())
-            return;
-
-        gFieldEffectArguments[0] = GetCursorSelectionMonId();
-        if ((int)gFieldEffectArguments[0] > PARTY_SIZE - 1)
-            gFieldEffectArguments[0] = 0;
-
-        FieldEffectStart(FLDEFF_USE_FLY);
-        task->data[0]++;
+        if (!gSaveBlock2Ptr->follower.inProgress)
+        {
+            task->data[3] = 2;
+        }
+        else
+        {
+            u8 followerObjId = GetFollowerObjectId();
+            follower->singleMovementActive = FALSE;
+            follower->heldMovementActive = FALSE;
+            switch (DetermineFollowerDirection(&gObjectEvents[gPlayerAvatar.objectEventId], &gObjectEvents[followerObjId]))
+            {
+                case DIR_NORTH:
+                    ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_UP);
+                    break;
+                case DIR_SOUTH:
+                    ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_DOWN);
+                    break;
+                case DIR_EAST:
+                    ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_RIGHT);
+                    break;
+                case DIR_WEST:
+                    ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_LEFT);
+                    break;
+            }
+            task->data[3]++;
+        }
     }
-    if (!FieldEffectActiveListContains(FLDEFF_USE_FLY))
+    if (task->data[3] == 1)
     {
-        Overworld_ResetStateAfterFly();
-        WarpIntoMap();
-        SetMainCallback2(CB2_LoadMap);
-        gFieldCallback = FieldCallback_FlyIntoMap;
-        DestroyTask(taskId);
+        if (ObjectEventClearHeldMovementIfFinished(follower))
+        {
+            SetFollowerSprite(FOLLOWER_SPRITE_INDEX_NORMAL);
+            follower->invisible = TRUE;
+            gSaveBlock2Ptr->follower.comeOutDoorStairs = 0; // In case the follower was still coming out of a door.
+            task->data[3]++;
+        }
+    }
+    if (task->data[3] == 2)
+    {
+        if (!task->data[0])
+        {
+            if (!IsWeatherNotFadingIn())
+                return;
+
+            gFieldEffectArguments[0] = GetCursorSelectionMonId();
+            if ((int)gFieldEffectArguments[0] > PARTY_SIZE - 1)
+                gFieldEffectArguments[0] = 0;
+
+            FieldEffectStart(FLDEFF_USE_FLY);
+            task->data[0]++;
+        }
+        if (!FieldEffectActiveListContains(FLDEFF_USE_FLY))
+        {
+            Overworld_ResetStateAfterFly();
+            WarpIntoMap();
+            SetMainCallback2(CB2_LoadMap);
+            gFieldCallback = FieldCallback_FlyIntoMap;
+            DestroyTask(taskId);
+        }
     }
 }
 
@@ -1397,6 +1446,8 @@ static void FieldCallback_FlyIntoMap(void)
 
 static void Task_FlyIntoMap(u8 taskId)
 {
+    struct ObjectEvent *player = &gObjectEvents[gPlayerAvatar.objectEventId];
+    struct ObjectEvent *follower = &gObjectEvents[GetFollowerMapObjId()];
     struct Task *task;
     task = &gTasks[taskId];
     if (task->data[0] == 0)
@@ -1408,7 +1459,35 @@ static void Task_FlyIntoMap(u8 taskId)
         FieldEffectStart(FLDEFF_FLY_IN);
         task->data[0]++;
     }
-    if (!FieldEffectActiveListContains(FLDEFF_FLY_IN))
+    if (task->data[0] == 1)
+    {
+        if (!FieldEffectActiveListContains(FLDEFF_FLY_IN))
+        {
+            if (gSaveBlock2Ptr->follower.inProgress) {
+                follower->invisible = FALSE; // Show the follower after FLY
+                MoveObjectEventToMapCoords(follower, player->currentCoords.x, player->currentCoords.y);
+                ObjectEventTurn(follower, DIR_SOUTH); // Turn the follower SOUTH
+                follower->singleMovementActive = FALSE;
+                follower->heldMovementActive = FALSE;
+                ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_DOWN); // Follower takes a step SOUTH
+            }
+            task->data[0]++;
+        }
+    }
+    if (task->data[0] == 2)
+    {
+        if (gSaveBlock2Ptr->follower.inProgress && ObjectEventClearHeldMovementIfFinished(follower))
+        {
+            ObjectEventTurn(follower, DIR_NORTH); // Follower faces the player
+            gSaveBlock2Ptr->follower.warpEnd = 0;
+            task->data[0]++;
+        }
+        else if (!gSaveBlock2Ptr->follower.inProgress)
+        {
+            task->data[0]++;
+        }
+    }
+    if (task->data[0] == 3)
     {
         UnlockPlayerFieldControls();
         UnfreezeObjectEvents();
@@ -1548,6 +1627,9 @@ static bool8 FallWarpEffect_End(struct Task *task)
     UnfreezeObjectEvents();
     InstallCameraPanAheadCallback();
     DestroyTask(FindTaskIdByFunc(Task_FallWarpFieldEffect));
+
+    FollowMe_WarpSetEnd();
+
     return FALSE;
 }
 
@@ -1561,6 +1643,15 @@ static bool8 FallWarpEffect_End(struct Task *task)
 
 #define tState   data[0]
 #define tGoingUp data[1]
+
+static void HideFollowerForFieldEffect(void)
+{
+    struct ObjectEvent *followerObj = GetFollowerObject();
+    if (!followerObj || followerObj->invisible)
+        return;
+    ClearObjectEventMovement(followerObj, &gSprites[followerObj->spriteId]);
+    ObjectEventSetHeldMovement(followerObj, MOVEMENT_ACTION_ENTER_POKEBALL);
+}
 
 void StartEscalatorWarp(u8 metatileBehavior, u8 priority)
 {
@@ -1585,6 +1676,7 @@ static bool8 EscalatorWarpOut_Init(struct Task *task)
     FreezeObjectEvents();
     CameraObjectFreeze();
     StartEscalator(task->tGoingUp);
+    HideFollowerForFieldEffect(); // Hide follower before warping
     task->tState++;
     return FALSE;
 }
@@ -1599,7 +1691,10 @@ static bool8 EscalatorWarpOut_WaitForPlayer(struct Task *task)
         task->tState++;
         task->data[2] = 0;
         task->data[3] = 0;
-        if ((u8)task->tGoingUp == FALSE)
+
+        EscalatorMoveFollower(task->data[1]);
+
+        if ((u8)task->data[1] == FALSE)
         {
             task->tState = 4; // jump to EscalatorWarpOut_Down_Ride
         }
@@ -1967,6 +2062,8 @@ static bool8 LavaridgeGymB1FWarpEffect_Init(struct Task *task, struct ObjectEven
     objectEvent->fixedPriority = 1;
     task->data[1] = 1;
     task->data[0]++;
+    if (objectEvent->localId == OBJ_EVENT_ID_PLAYER) // Hide follower before warping
+        HideFollowerForFieldEffect();
     return TRUE;
 }
 
@@ -2158,6 +2255,8 @@ static bool8 LavaridgeGym1FWarpEffect_Init(struct Task *task, struct ObjectEvent
     gPlayerAvatar.preventStep = TRUE;
     objectEvent->fixedPriority = 1;
     task->data[0]++;
+    if (objectEvent->localId == OBJ_EVENT_ID_PLAYER) // Hide follower before warping
+        HideFollowerForFieldEffect();
     return FALSE;
 }
 
@@ -2243,6 +2342,7 @@ void StartEscapeRopeFieldEffect(void)
 {
     LockPlayerFieldControls();
     FreezeObjectEvents();
+    HideFollowerForFieldEffect(); // hide follower before warping
     CreateTask(Task_EscapeRopeWarpOut, 80);
 }
 
@@ -2256,6 +2356,50 @@ static void EscapeRopeWarpOutEffect_Init(struct Task *task)
     task->tState++;
     task->tTimer = 64;
     task->tStartDir = GetPlayerFacingDirection();
+}
+
+static void EscapeRopeWarpOutEffect_HideFollower(struct Task *task)
+{
+    struct ObjectEvent *follower = &gObjectEvents[GetFollowerMapObjId()];
+    if (task->data[3] == 0)
+    {
+        if (!gSaveBlock2Ptr->follower.inProgress)
+        {
+            task->tState++;
+        }
+        else
+        {
+            u8 followerObjId = GetFollowerObjectId();
+            follower->singleMovementActive = FALSE;
+            follower->heldMovementActive = FALSE;
+            switch (DetermineFollowerDirection(&gObjectEvents[gPlayerAvatar.objectEventId], &gObjectEvents[followerObjId]))
+            {
+                case DIR_NORTH:
+                    ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_UP);
+                    break;
+                case DIR_SOUTH:
+                    ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_DOWN);
+                    break;
+                case DIR_EAST:
+                    ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_RIGHT);
+                    break;
+                case DIR_WEST:
+                    ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_LEFT);
+                    break;
+            }
+            task->data[3]++;
+        }
+    }
+    if (task->data[3] == 1)
+    {
+        if (ObjectEventClearHeldMovementIfFinished(follower))
+        {
+            SetFollowerSprite(FOLLOWER_SPRITE_INDEX_NORMAL);
+            follower->invisible = TRUE;
+            gSaveBlock2Ptr->follower.comeOutDoorStairs = 0; // In case the follower was still coming out of a door.
+            task->tState++;
+        }
+    }
 }
 
 static void EscapeRopeWarpOutEffect_Spin(struct Task *task)
@@ -2316,33 +2460,69 @@ static void EscapeRopeWarpInEffect_Init(struct Task *task)
     {
         task->tState++;
         task->tStartDir = GetPlayerFacingDirection();
+        task->data[3] = 0;
     }
 }
 
 static void EscapeRopeWarpInEffect_Spin(struct Task *task)
 {
     u8 spinDirections[5] = {DIR_SOUTH, DIR_WEST, DIR_EAST, DIR_NORTH, DIR_SOUTH};
-    struct ObjectEvent *objectEvent = &gObjectEvents[gPlayerAvatar.objectEventId];
-    if (task->tSpinDelay == 0 || (--task->tSpinDelay) == 0)
+    struct ObjectEvent *player = &gObjectEvents[gPlayerAvatar.objectEventId];
+    struct ObjectEvent *follower = &gObjectEvents[GetFollowerMapObjId()];
+    if ((task->tSpinDelay == 0 || (--task->tSpinDelay) == 0) && task->data[3] == 0)
     {
-        if (ObjectEventIsMovementOverridden(objectEvent) && !ObjectEventClearHeldMovementIfFinished(objectEvent))
+        if (ObjectEventIsMovementOverridden(player) && !ObjectEventClearHeldMovementIfFinished(player))
         {
             return;
         }
         if (task->tNumTurns >= 32 && task->tStartDir == GetPlayerFacingDirection())
         {
-            objectEvent->invisible = FALSE;
-            UnlockPlayerFieldControls();
-            UnfreezeObjectEvents();
-            DestroyTask(FindTaskIdByFunc(Task_EscapeRopeWarpIn));
-            return;
+            task->data[3]++;
         }
-        ObjectEventSetHeldMovement(objectEvent, GetFaceDirectionMovementAction(spinDirections[objectEvent->facingDirection]));
+        if (task->data[3] == 0)
+            ObjectEventSetHeldMovement(player, GetFaceDirectionMovementAction(spinDirections[player->facingDirection]));
+
         if (task->tNumTurns < 32)
             task->tNumTurns++;
+
         task->tSpinDelay = task->tNumTurns >> 2;
     }
-    objectEvent->invisible ^= 1;
+    if (task->data[3] == 0)
+        player->invisible ^= 1;
+
+    if (task->data[3] == 1)
+    {
+        if (gSaveBlock2Ptr->follower.inProgress) {
+            follower->invisible = FALSE; // Show the follower after ESCAPE ROPE
+            MoveObjectEventToMapCoords(follower, player->currentCoords.x, player->currentCoords.y);
+            ObjectEventTurn(follower, DIR_SOUTH); // Turn the follower SOUTH
+            follower->singleMovementActive = FALSE;
+            follower->heldMovementActive = FALSE;
+            ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_DOWN); // Follower takes a step SOUTH
+            }
+        task->data[3]++;
+    }
+    if (task->data[3] == 2)
+    {
+        if (gSaveBlock2Ptr->follower.inProgress && ObjectEventClearHeldMovementIfFinished(follower))
+        {
+            ObjectEventTurn(follower, DIR_NORTH); // Follower faces the player
+            gSaveBlock2Ptr->follower.warpEnd = 0;
+            task->data[3]++;
+        }
+        else if (!gSaveBlock2Ptr->follower.inProgress)
+        {
+            task->data[3]++;
+        }
+    }
+    if (task->data[3] == 3)
+    {
+        player->invisible = FALSE;
+        UnlockPlayerFieldControls();
+        UnfreezeObjectEvents();
+        DestroyTask(FindTaskIdByFunc(Task_EscapeRopeWarpIn));
+        return;
+    }
 }
 
 #undef tState
@@ -2526,24 +2706,52 @@ static void TeleportWarpInFieldEffect_SpinEnter(struct Task *task)
         task->data[0]++;
         task->data[1] = 1;
         task->data[2] = 0;
+        task->data[3] = 0;
     }
 }
 
 static void TeleportWarpInFieldEffect_SpinGround(struct Task *task)
 {
+    struct ObjectEvent *player = &gObjectEvents[gPlayerAvatar.objectEventId];
+    struct ObjectEvent *follower = &gObjectEvents[GetFollowerMapObjId()];
     u8 spinDirections[5] = {DIR_SOUTH, DIR_WEST, DIR_EAST, DIR_NORTH, DIR_SOUTH};
-    struct ObjectEvent *objectEvent = &gObjectEvents[gPlayerAvatar.objectEventId];
-    if ((--task->data[1]) == 0)
+    if ((--task->data[1]) == 0 && task->data[3] == 0)
     {
-        ObjectEventTurn(objectEvent, spinDirections[objectEvent->facingDirection]);
+        ObjectEventTurn(player, spinDirections[player->facingDirection]);
         task->data[1] = 8;
-        if ((++task->data[2]) > 4 && task->data[14] == objectEvent->facingDirection)
+        if ((++task->data[2]) > 4 && task->data[14] == player->facingDirection)
         {
-            UnlockPlayerFieldControls();
-            CameraObjectReset();
-            UnfreezeObjectEvents();
-            DestroyTask(FindTaskIdByFunc(Task_TeleportWarpIn));
+            if (gSaveBlock2Ptr->follower.inProgress) {
+                follower->invisible = FALSE; // Show the follower after TELEPORT
+                MoveObjectEventToMapCoords(follower, player->currentCoords.x, player->currentCoords.y);
+                ObjectEventTurn(follower, DIR_SOUTH); // Turn the follower SOUTH
+                follower->singleMovementActive = FALSE;
+                follower->heldMovementActive = FALSE;
+                ObjectEventSetHeldMovement(follower, MOVEMENT_ACTION_WALK_NORMAL_DOWN); // Follower takes a step SOUTH
+            }
+            task->data[3] = 1;
         }
+    }
+    if (task->data[3] == 1)
+    {
+        if (gSaveBlock2Ptr->follower.inProgress && ObjectEventClearHeldMovementIfFinished(follower))
+        {
+            ObjectEventTurn(player, DIR_SOUTH); // Player faces the follower
+            ObjectEventTurn(follower, DIR_NORTH); // Follower faces the player
+            gSaveBlock2Ptr->follower.warpEnd = 0;
+            task->data[3]++;
+        }
+        else if (!gSaveBlock2Ptr->follower.inProgress)
+        {
+            task->data[3]++;
+        }
+    }
+    if (task->data[3] == 2)
+    {
+        UnlockPlayerFieldControls();
+        CameraObjectReset();
+        UnfreezeObjectEvents();
+        DestroyTask(FindTaskIdByFunc(Task_TeleportWarpIn));
     }
 }
 
@@ -3007,6 +3215,8 @@ static void SurfFieldEffect_Init(struct Task *task)
 {
     LockPlayerFieldControls();
     FreezeObjectEvents();
+    // Put follower into pokeball before using Surf
+    HideFollowerForFieldEffect();
     gPlayerAvatar.preventStep = TRUE;
     SetPlayerAvatarStateMask(PLAYER_AVATAR_FLAG_SURFING);
     PlayerGetDestCoords(&task->tDestX, &task->tDestY);
@@ -3047,6 +3257,9 @@ static void SurfFieldEffect_JumpOnSurfBlob(struct Task *task)
         ObjectEventSetGraphicsId(objectEvent, GetPlayerAvatarGraphicsIdByStateId(PLAYER_AVATAR_STATE_SURFING));
         ObjectEventClearHeldMovementIfFinished(objectEvent);
         ObjectEventSetHeldMovement(objectEvent, GetJumpSpecialMovementAction(objectEvent->movementDirection));
+        
+        FollowMe_FollowerToWater();
+
         gFieldEffectArguments[0] = task->tDestX;
         gFieldEffectArguments[1] = task->tDestY;
         gFieldEffectArguments[2] = gPlayerAvatar.objectEventId;
@@ -3057,13 +3270,15 @@ static void SurfFieldEffect_JumpOnSurfBlob(struct Task *task)
 
 static void SurfFieldEffect_End(struct Task *task)
 {
-    struct ObjectEvent *objectEvent;
-    objectEvent = &gObjectEvents[gPlayerAvatar.objectEventId];
+    struct ObjectEvent *objectEvent = &gObjectEvents[gPlayerAvatar.objectEventId];
+    struct ObjectEvent *followerObject = GetFollowerObject();
     if (ObjectEventClearHeldMovementIfFinished(objectEvent))
     {
         gPlayerAvatar.preventStep = FALSE;
         gPlayerAvatar.flags &= ~PLAYER_AVATAR_FLAG_CONTROLLABLE;
         ObjectEventSetHeldMovement(objectEvent, GetFaceDirectionMovementAction(objectEvent->movementDirection));
+        if (followerObject)
+            ObjectEventClearHeldMovementIfFinished(followerObject);
         SetSurfBlob_BobState(objectEvent->fieldEffectSpriteId, BOB_PLAYER_AND_MON);
         UnfreezeObjectEvents();
         UnlockPlayerFieldControls();
@@ -3119,7 +3334,7 @@ u8 FldEff_NPCFlyOut(void)
     u8 spriteId = CreateSprite(gFieldEffectObjectTemplatePointers[FLDEFFOBJ_BIRD], 0x78, 0, 1);
     struct Sprite *sprite = &gSprites[spriteId];
 
-    sprite->oam.paletteNum = 0;
+    sprite->oam.paletteNum = LoadPlayerObjectEventPalette(gSaveBlock2Ptr->playerGender);
     sprite->oam.priority = 1;
     sprite->callback = SpriteCB_NPCFlyOut;
     sprite->data[1] = gFieldEffectArguments[0];
@@ -3301,7 +3516,7 @@ static u8 CreateFlyBirdSprite(void)
     struct Sprite *sprite;
     spriteId = CreateSprite(gFieldEffectObjectTemplatePointers[FLDEFFOBJ_BIRD], 0xff, 0xb4, 0x1);
     sprite = &gSprites[spriteId];
-    sprite->oam.paletteNum = 0;
+    sprite->oam.paletteNum = LoadPlayerObjectEventPalette(gSaveBlock2Ptr->playerGender);
     sprite->oam.priority = 1;
     sprite->callback = SpriteCB_FlyBirdLeaveBall;
     return spriteId;
