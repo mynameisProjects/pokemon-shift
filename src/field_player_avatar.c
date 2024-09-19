@@ -47,8 +47,8 @@ static void MovePlayerAvatarUsingKeypadInput(u8, u16, u16);
 static void PlayerAllowForcedMovementIfMovingSameDirection();
 static bool8 TryDoMetatileBehaviorForcedMovement();
 static u8 GetForcedMovementByMetatileBehavior();
-//static bool8 IsSidewaysStairToRight(s16, s16, u8);
-//static bool8 IsSidewaysStairToLeft(s16, s16, u8);
+static bool8 IsSidewaysStairToRight(s16, s16, u8);
+static bool8 IsSidewaysStairToLeft(s16, s16, u8);
 
 static bool8 ForcedMovement_None(void);
 static bool8 ForcedMovement_Slip(void);
@@ -723,7 +723,7 @@ u8 CheckForObjectEventCollision(struct ObjectEvent *objectEvent, s16 x, s16 y, u
     }
     
     //sideways stairs logic
-    
+    /*
     if (MetatileBehavior_IsSidewaysStairsLeftSideTop(metatileBehavior) && direction == DIR_EAST)
         return COLLISION_IMPASSABLE;    //moving onto left-side top edge east from ground -> cannot move
     else if (MetatileBehavior_IsSidewaysStairsRightSideTop(metatileBehavior) && direction == DIR_WEST)
@@ -735,7 +735,7 @@ u8 CheckForObjectEventCollision(struct ObjectEvent *objectEvent, s16 x, s16 y, u
     else if ((MetatileBehavior_IsSidewaysStairsLeftSideTop(currentBehavior) || MetatileBehavior_IsSidewaysStairsRightSideTop(currentBehavior))
      && direction == DIR_NORTH && collision == COLLISION_NONE)
         return COLLISION_IMPASSABLE;    //trying to move north off of top-most tile onto same level doesn't work
-    
+    */
         
     return collision;
 }
